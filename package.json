@@ -8,6 +8,7 @@
     "docker:reset": "docker compose down -v && docker compose up -d --wait && ./data/create-db-docker.sh && ./data/seed-test-user.sh",
     "content-studio": "python3 tools/content-studio/run.py",
     "content-studio:rebuild": "python3 tools/content-studio/run.py --rebuild",
+    "content-studio:check-schema": "python3 tools/content-studio/check_schema.py",
     "docs:dev": "npm --prefix docs run dev",
     "docs:build": "npm --prefix docs run build",
     "docs:check": "npm --prefix docs run broken-links",

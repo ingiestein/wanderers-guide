@@ -48,8 +48,61 @@ alias wgcs='npm run content-studio'
 | `data/data.sql` refreshed (repo pull / dump update) | Next `npm run content-studio` detects the new stamp and rebuilds SQLite automatically |
 | Content Studio React UI changed | Vite HMR picks it up; no DB rebuild |
 | Force a clean DB | `npm run content-studio -- --rebuild` or `build_db.py --force` |
+| Upstream schema / dump changed | Run `npm run content-studio:check-schema` then rebuild |
 
 SQLite + stamp files are gitignored under this folder.
+
+## After pulling upstream `main`
+
+```bash
+# Prefer rebase so Content Studio stays one commit on top of origin/main
+git fetch origin
+git rebase origin/main
+
+# Optional: track wanderers-guide/wanderers-guide as upstream
+git fetch upstream
+git rebase upstream/main
+
+# See what the dump/schema changed relative to our SQLite column lists + Zod
+npm run content-studio:check-schema
+
+# If columns were added to build_db.TABLES (or the dump is new):
+npm run content-studio:rebuild
+```
+
+`check_schema.py` compares:
+
+1. `data/schema.sql` → columns Content Studio imports (`build_db.py` `TABLES`)
+2. Those SQL columns → top-level keys in `frontend/src/schemas/content.ts` (heuristic)
+
+Exit code `1` means Content Studio would drop new SQL columns until you update `TABLES`.
+
+## Isolation from the rest of the app
+
+Content Studio is intentionally **soft-isolated**, not a second app:
+
+| Layer | Where it lives | Couples to upstream? |
+|---|---|---|
+| Local API + SQLite builder | `tools/content-studio/` | Only via `data/data.sql` + `data/schema.sql` |
+| Browse UI | `frontend/src/pages/admin_panel/content_studio/` | Uses shared drawers/schemas via imports |
+| Thin entry hooks | `main.tsx` route, `AdminPage` button, `package.json` scripts | Tiny; rarely conflicts |
+| Shared improvements reused by CS | `foundry-utils`, creature package fetch, `search-data` trait filters, drawer perf | **Yes** — treat carefully on rebase |
+
+**Options if upstream churn starts breaking CS often:**
+
+1. **Keep soft isolation (default)** — CS UI + tools stay in their folders; shared patches stay additive/small; rebase after every upstream sync; run `content-studio:check-schema`.
+2. **Freeze shared patches** — move CS-only display transforms into `content_studio/` wrappers so `CreatureDrawer` / `RichText` upstream edits stop colliding.
+3. **Hard isolate** — separate Vite package that talks only to `tools/content-studio` API (duplicates Mantine/theme; highest maintenance cost).
+
+Prefer (1) until rebase conflicts on shared files become frequent; then do (2) for the hot files only.
+
+### Shared touchpoints to watch on rebase
+
+- `frontend/src/process/upload/foundry-utils.ts` — `@Check` → prose
+- `frontend/src/process/content/content-store.ts` — `fetchCreatureContentPackage`
+- `frontend/src/drawers/types/CreatureDrawer.tsx` / `StatBlockSection.tsx`
+- `supabase/functions/search-data/index.ts` — creature/hazard trait filters
+- Drawer list virtualization / slim fetches in Action/Class drawers
 
 ## Requirements
 
