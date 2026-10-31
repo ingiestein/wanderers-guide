@@ -6,6 +6,8 @@
     "docker:stop": "docker compose down",
     "docker:rebuild": "docker compose up -d --build frontend",
     "docker:reset": "docker compose down -v && docker compose up -d --wait && ./data/create-db-docker.sh && ./data/seed-test-user.sh",
+    "content-studio": "python3 tools/content-studio/run.py",
+    "content-studio:rebuild": "python3 tools/content-studio/run.py --rebuild",
     "docs:dev": "npm --prefix docs run dev",
     "docs:build": "npm --prefix docs run build",
     "docs:check": "npm --prefix docs run broken-links",

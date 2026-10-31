@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   AbilityBlock,
   AbilityBlockType,
+  ContentPackage,
   ContentType,
   InventoryItem,
   Item,
@@ -37,6 +38,16 @@ import { getInnateStatBlockGroups } from '@spells/innate-stat-block';
 export default function StatBlockSection(props: {
   storeId?: StoreID;
   entity: LivingEntity;
+  /**
+   * Bump after creature/character operations finish so resist/weak/immune
+   * values are read from the settled variable store (avoids caching empties).
+   */
+  calculationKey?: number | string;
+  /**
+   * Reuse the drawer’s already-loaded package so the block does not re-fetch
+   * the full INFO catalog (the previous double-load made creature opens feel stuck).
+   */
+  contentPackage?: ContentPackage;
   options?: {
     hideName?: boolean;
     hideTraits?: boolean;
@@ -48,11 +59,22 @@ export default function StatBlockSection(props: {
   const isPhone = useMediaQuery(phoneQuery());
 
   const { entity } = props;
+  const entityUpdatedAt = 'updated_at' in entity ? (entity as { updated_at?: string }).updated_at : undefined;
   const { data, isLoading } = useQuery({
-    queryKey: [`fetch-stat-block-data-content`, { entity, storeId: props.storeId }],
+    queryKey: [
+      'fetch-stat-block-data-content',
+      props.storeId ?? null,
+      entity.id,
+      entityUpdatedAt ?? null,
+      props.calculationKey ?? 0,
+      props.contentPackage ? 'scoped' : 'full',
+    ],
     queryFn: async () => {
-      return await getJsonV4Content(entity, props.storeId);
+      return await getJsonV4Content(entity, props.storeId, props.contentPackage);
     },
+    staleTime: 0,
+    // Always re-read the variable store when this section remounts after ops settle.
+    refetchOnMount: 'always',
   });
 
   const isPreformattedDescription = isCreature(entity) && entity.details.description?.includes('**');
@@ -167,7 +189,11 @@ export default function StatBlockSection(props: {
     );
   };
 
-  const getResistWeaksDisplay = (
+  /**
+   * PF2e defense line after HP: Immunities / Resistances / Weaknesses.
+   * Notes from creature meta_data.stat_block are appended when present.
+   */
+  const getResistWeaksText = (
     rw: { resists: string[]; weaks: string[]; immunes: string[] },
     notes?: { immunities_note?: string; resistances_note?: string }
   ) => {
@@ -177,15 +203,13 @@ export default function StatBlockSection(props: {
     const resists = notes?.resistances_note
       ? [...rw.resists, notes.resistances_note].sort((a, b) => a.localeCompare(b))
       : rw.resists;
-    const str = [
+    return [
       immunes.length > 0 ? `**Immunities** ${immunes.join(', ').toLowerCase()}` : undefined,
       resists.length > 0 ? `**Resistances** ${resists.join(', ').toLowerCase()}` : undefined,
       rw.weaks.length > 0 ? `**Weaknesses** ${rw.weaks.join(', ').toLowerCase()}` : undefined,
     ]
       .filter(isTruthy)
       .join('; ');
-
-    return str ? `; ${str}` : '';
   };
 
   const getAbilityDisplay = (ab: AbilityBlock) => {
@@ -456,6 +480,7 @@ export default function StatBlockSection(props: {
   const abilities = flatten(Object.values(data.feats_features));
 
   const IMAGE_SIZE = props.options?.hideImage || !entity.details?.image_url ? 0 : 120;
+  const resistWeaksText = getResistWeaksText(data.resist_weaks, statBlock);
 
   return (
     <Stack gap={5} pb={15}>
@@ -583,14 +608,19 @@ export default function StatBlockSection(props: {
           </RichText>
         )}
       </IndentedText>
-      {!props.options?.hideHealth && (
+      {/* Book order: HP then immunities / resistances / weaknesses on one line. */}
+      {!props.options?.hideHealth ? (
         <RichText ta='justify' fz='xs' span>
           **HP** {entity.hp_current ?? data.max_hp} / {data.max_hp}
           {entity.hp_temp ? ` (${entity.hp_temp} temp)` : ''}
           {statBlock?.hp_note ? `; ${statBlock.hp_note}` : ''}
-          {getResistWeaksDisplay(data.resist_weaks, statBlock)}
+          {resistWeaksText ? `; ${resistWeaksText}` : ''}
         </RichText>
-      )}
+      ) : resistWeaksText ? (
+        <RichText ta='justify' fz='xs' span>
+          {resistWeaksText}
+        </RichText>
+      ) : null}
       {entity.details?.conditions && entity.details.conditions.length > 0 && (
         <IndentedText ta='justify' fz='xs' pr={IMAGE_SIZE} span>
           <Text fz='xs' fw={600} c='gray.4' span>

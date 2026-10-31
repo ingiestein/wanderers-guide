@@ -145,6 +145,11 @@ const router = createBrowserRouter([
         lazy: () => import('@pages/ContentCleaningSourcePage.tsx'),
       },
       {
+        // Local/private content browser — no auth (not a public product surface)
+        path: 'admin/content-studio',
+        lazy: async () => import('@pages/admin_panel/content_studio/ContentStudioPage.tsx'),
+      },
+      {
         // Legacy Character Redirect
         path: 'profile/characters/:id',
         lazy: () => import('@pages/LegacyRedirectPage.tsx'),

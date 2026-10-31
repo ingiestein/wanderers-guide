@@ -1035,6 +1035,92 @@ export async function fetchContentPackage(
   return p;
 }
 
+/**
+ * Content package for one creature — by-id fetches only.
+ *
+ * Opening a creature drawer used to call {@link fetchContentPackage}, which dumps
+ * every ability block / item / ancestry / … for INFO sources (multi-second). Creatures
+ * already embed `abilities_base` and inventory items; this pulls only the missing
+ * referenced rows so previews stay fast without changing stored content.
+ */
+export async function fetchCreatureContentPackage(creature: Creature): Promise<ContentPackage> {
+  await ensureCacheActor();
+  const defaultSources = { PAGE: getDefaultSources('PAGE'), INFO: getDefaultSources('INFO') };
+
+  const addedAbilityIds = uniq((creature.abilities_added ?? []).filter((id) => Number.isFinite(id) && id > 0));
+  const spellIds = uniq(
+    [
+      ...(creature.spells?.list?.map((entry) => entry.spell_id) ?? []),
+      ...(creature.spells?.innate_casts?.map((entry) => entry.spell_id) ?? []),
+      ...(creature.spells?.slots?.map((slot) => slot.spell_id).filter(isTruthy) ?? []),
+    ].filter((id) => Number.isFinite(id) && id > 0)
+  );
+  const itemIds = collectCreatureReferencedItemIds(creature);
+
+  const baseAbilities = creature.abilities_base ?? [];
+
+  const [addedBlocks, spells, items, traits] = await Promise.all([
+    addedAbilityIds.length > 0 ? fetchContent<AbilityBlock>('ability-block', { id: addedAbilityIds }) : [],
+    spellIds.length > 0 ? fetchContent<Spell>('spell', { id: spellIds }) : [],
+    itemIds.length > 0 ? fetchContent<Item>('item', { id: itemIds }) : [],
+    // Trait chips / RK text need the catalog after ops assign trait vars. Traits are
+    // far smaller than ability-block/item dumps; still scoped to INFO only.
+    fetchContentAll<Trait>('trait', defaultSources.INFO),
+  ]);
+
+  return {
+    ancestries: [],
+    backgrounds: [],
+    classes: [],
+    abilityBlocks: uniqBy([...baseAbilities, ...addedBlocks], (block) => block.id),
+    items,
+    languages: [],
+    spells,
+    traits,
+    creatures: [],
+    archetypes: [],
+    versatileHeritages: [],
+    classArchetypes: [],
+    defaultSources,
+  } satisfies ContentPackage;
+}
+
+function flattenInventoryItems(creature: Creature) {
+  const out: { item: Item }[] = [];
+  const walk = (entries: { item: Item; container_contents?: { item: Item; container_contents?: unknown[] }[] }[]) => {
+    for (const entry of entries) {
+      out.push(entry);
+      if (entry.container_contents?.length) {
+        walk(entry.container_contents as typeof entries);
+      }
+    }
+  };
+  if (creature.inventory?.items) walk(creature.inventory.items);
+  return out;
+}
+
+/** Rune / upgrade item ids that are not already embedded on the inventory row. */
+function collectCreatureReferencedItemIds(creature: Creature): number[] {
+  const ids: number[] = [];
+  for (const invItem of flattenInventoryItems(creature)) {
+    const item = invItem.item;
+    for (const property of item.meta_data?.runes?.property ?? []) {
+      if (property.id && !(property.rune?.id === property.id && property.rune?.group === 'RUNE')) {
+        ids.push(property.id);
+      }
+    }
+    for (const slot of [
+      ...(item.meta_data?.starfinder?.slots ?? []),
+      ...(item.meta_data?.starfinder?.built_in_upgrades ?? []),
+    ]) {
+      if (slot.id && slot.upgrade?.id !== slot.id) {
+        ids.push(slot.id);
+      }
+    }
+  }
+  return uniq(ids.filter((id) => Number.isFinite(id) && id > 0));
+}
+
 export async function findRequiredContentSources(sourceIds?: number[]) {
   if (!sourceIds || sourceIds.length === 0) {
     return { sourceIds: [], sources: [], newSourceIds: [], newSources: [] };

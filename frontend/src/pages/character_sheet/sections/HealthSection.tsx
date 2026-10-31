@@ -22,6 +22,8 @@ export default function HealthSection(props: {
   id: StoreID;
   entity: LivingEntity | null;
   setEntity: SetterOrUpdater<LivingEntity | null>;
+  /** When true, omit the button that opens Resistances & Weaknesses in a side drawer. */
+  hideResistWeakButton?: boolean;
 }) {
   const theme = useMantineTheme();
 
@@ -231,21 +233,23 @@ export default function HealthSection(props: {
             </Group>
           )}
           <Group wrap='nowrap' justify='center' gap={0}>
-            <Button
-              variant='subtle'
-              color='gray.5'
-              size='compact-xs'
-              fw={400}
-              onClick={() => {
-                openDrawer({
-                  type: 'stat-resist-weak',
-                  data: { id: props.id },
-                  extra: { addToHistory: true },
-                });
-              }}
-            >
-              Resistances & Weaknesses
-            </Button>
+            {!props.hideResistWeakButton && (
+              <Button
+                variant='subtle'
+                color='gray.5'
+                size='compact-xs'
+                fw={400}
+                onClick={() => {
+                  openDrawer({
+                    type: 'stat-resist-weak',
+                    data: { id: props.id },
+                    extra: { addToHistory: true },
+                  });
+                }}
+              >
+                Resistances & Weaknesses
+              </Button>
+            )}
             {/* Take a Breather (stamina variant): spend 1 resolve to refill stamina */}
             {staminaVariant && (
               <Button

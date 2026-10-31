@@ -38,7 +38,8 @@ export function SpellDrawerTitle(props: { data: { id?: number; spell?: Spell; en
     },
     enabled: !!id,
   });
-  const spell = props.data.spell ?? _spell;
+  // Prefer network so a slim list-row placeholder can upgrade to the full record.
+  const spell = _spell ?? props.data.spell;
 
   const cast = spell?.cast ?? '';
 
@@ -101,7 +102,8 @@ export function SpellDrawerContent(props: { data: { id?: number; spell?: Spell }
     },
     enabled: !!id,
   });
-  const spell = props.data.spell ?? _spell;
+  // Slim search rows lack description — wait for by-id (or a full in-memory record).
+  const spell = _spell ?? (props.data.spell?.description != null ? props.data.spell : undefined);
 
   if (!spell) {
     return <DrawerLoadState loading={isFetching} onRetry={refetch} />;

@@ -14,6 +14,7 @@ import { compileExpressions } from '@variables/variable-utils';
 import { StoreID } from '@schemas/variables';
 import { isString } from 'lodash-es';
 import { remarkConditionLinks } from './rich-text-conditions';
+import { stripFoundryLinking } from '@upload/foundry-utils';
 
 interface RichTextProps extends TextProps {
   children: any;
@@ -41,6 +42,8 @@ export default function RichText(props: RichTextProps) {
   }
 
   if (convertedChildren) {
+    // Display-only: Foundry enrichers (@Check, @Template, …) → readable PF2e prose.
+    convertedChildren = stripFoundryLinking(convertedChildren);
     convertedChildren = compileExpressions(store ?? 'CHARACTER', convertedChildren, true);
   }
 

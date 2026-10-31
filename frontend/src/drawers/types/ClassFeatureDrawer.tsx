@@ -30,7 +30,8 @@ export function ClassFeatureDrawerTitle(props: { data: { id?: number; classFeatu
     },
     enabled: !!id,
   });
-  const classFeature = props.data.classFeature ?? _classFeature;
+  // Prefer network so a slim list-row placeholder can upgrade to the full record.
+  const classFeature = _classFeature ?? props.data.classFeature;
 
   return (
     <>
@@ -70,7 +71,9 @@ export function ClassFeatureDrawerContent(props: {
     },
     enabled: !!id,
   });
-  const classFeature = props.data.classFeature ?? _classFeature;
+  // Slim search rows lack description — wait for by-id (or a full in-memory record).
+  const classFeature =
+    _classFeature ?? (props.data.classFeature?.description != null ? props.data.classFeature : undefined);
 
   if (!classFeature) {
     return <DrawerLoadState loading={isFetching} onRetry={refetch} />;

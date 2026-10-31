@@ -12,3 +12,10 @@ node_modules/
 .agents/worktrees/
 .agents/legacy/
 .agents/**/__pycache__/
+
+# Local Content Studio (SQLite + venv)
+tools/content-studio/.venv/
+tools/content-studio/content.sqlite
+tools/content-studio/content.sqlite.stamp
+tools/content-studio/content.sqlite.tmp
+tools/content-studio/.content.sqlite.tmp

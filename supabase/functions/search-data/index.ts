@@ -317,9 +317,8 @@ async function handleAdvancedSearch(
 
   const searchCreatures = async (type: CreatureRecordType) => {
     // Creatures don't carry top-level `description` or `traits` columns
-    // (description lives in `details.description`, traits aren't stored at
-    // all on the row), so applyCommonFilters can't be used wholesale. Apply
-    // only the safe shared filters.
+    // (description lives in `details.description`; creature tags live as
+    // giveTrait operations). Hazards keep tags on details.trait_ids.
     let q = client.from('creature').select().eq('type', type);
 
     if (filters.name) q = applySimpleSearch(q, 'name', filters.name);
@@ -328,6 +327,18 @@ async function handleAdvancedSearch(
       q = q.in('content_source_id', filters.content_sources);
     if (filters.level_min !== undefined) q = q.gte('level', filters.level_min);
     if (filters.level_max !== undefined) q = q.lte('level', filters.level_max);
+
+    // AND-match every requested tag.
+    if (filters.traits?.length) {
+      for (const traitId of filters.traits) {
+        if (type === 'creature') {
+          // jsonb array containment: extra keys on each op are fine.
+          q = q.contains('operations', [{ type: 'giveTrait', data: { traitId } }]);
+        } else {
+          q = q.contains('details', { trait_ids: [traitId] });
+        }
+      }
+    }
 
     q = q.order('level', { ascending: true }).order('name', { ascending: true });
 

@@ -1,13 +1,15 @@
 import { characterState } from '@atoms/characterAtoms';
 import { drawerState } from '@atoms/navAtoms';
+import { ActionSymbol } from '@common/Actions';
 import IndentedText from '@common/IndentedText';
 import RichText from '@common/RichText';
 import TraitsDisplay from '@common/TraitsDisplay';
-import { FeatSelectionOption } from '@common/select/SelectContent';
 import { isAbilityBlockVisible } from '@content/content-hidden';
 import { fetchContent, fetchContentById, getDefaultSources, getDefaultSourcesKey } from '@content/content-store';
 import ShowOperationsButton from '@drawers/ShowOperationsButton';
 import { getMetadataOpenedDict } from '@drawers/drawer-utils';
+import { ClassFeatureDrawerContent } from '@drawers/types/ClassFeatureDrawer';
+import { FeatDrawerContent } from '@drawers/types/FeatDrawer';
 import {
   Accordion,
   ActionIcon,
@@ -21,9 +23,9 @@ import {
   Image,
   Loader,
   Stack,
-  Table,
   Text,
   Title,
+  UnstyledButton,
   useMantineTheme,
 } from '@mantine/core';
 import { IMPRINT_BG_COLOR, IMPRINT_BORDER_COLOR } from '@constants/data';
@@ -35,6 +37,7 @@ import {
 import { OperationResult } from '@schemas/operations';
 import {
   IconBadgesFilled,
+  IconChevronDown,
   IconEyeFilled,
   IconFlare,
   IconHeartHandshake,
@@ -53,6 +56,124 @@ import { groupBy } from 'lodash-es';
 import { useState } from 'react';
 import { useAtom } from 'jotai';
 import { SetterOrUpdater } from '@utils/type-fixing';
+
+/** Multi-class placeholder features that stamp every participating class trait on one row. */
+const SHARED_CLASS_FEATURE_NAMES = new Set([
+  'Skill Feat',
+  'Skill Increase',
+  'General Feat',
+  'Attribute Boosts',
+]);
+
+/**
+ * Shared placeholders (Skill Feat, Attribute Boosts, …) list every class trait on one row.
+ * When browsing a single class, keep that class trait and drop the other class chips.
+ */
+export function traitsForClassContext(
+  traits: number[] | undefined,
+  focusTraitId: number | null | undefined,
+  classTraitIds: ReadonlySet<number> | undefined,
+  featureName?: string
+): number[] {
+  const list = traits ?? [];
+  if (focusTraitId == null || !list.includes(focusTraitId)) return list;
+
+  // Skill Feat / Attribute Boosts / etc. — show only the class being browsed.
+  if (featureName && SHARED_CLASS_FEATURE_NAMES.has(featureName)) {
+    return [focusTraitId];
+  }
+
+  if (!classTraitIds?.size) return list;
+  return list.filter((t) => t === focusTraitId || !classTraitIds.has(t));
+}
+
+/**
+ * Compact ability-block row that expands in-place (no nested drawer).
+ * Full body loads only after expand.
+ */
+export function ExpandableAbilityBlockRow(props: {
+  block: AbilityBlock;
+  kind: 'feat' | 'class-feature';
+  /** Controlled expand; omit for local toggle state. */
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
+  showLevel?: boolean;
+  /** When set with classTraitIds, hide other classes' chips on shared features. */
+  focusTraitId?: number | null;
+  classTraitIds?: ReadonlySet<number>;
+}) {
+  const [localExpanded, setLocalExpanded] = useState(false);
+  const expanded = props.expanded ?? localExpanded;
+  const setExpanded = props.onExpandedChange ?? setLocalExpanded;
+  const block = props.block;
+  const traitIds = traitsForClassContext(
+    block.traits,
+    props.focusTraitId,
+    props.classTraitIds,
+    block.name
+  );
+
+  return (
+    <Box
+      style={{
+        borderBottom: `1px solid ${IMPRINT_BORDER_COLOR}`,
+        backgroundColor: expanded ? 'rgba(0,0,0,0.12)' : undefined,
+        borderRadius: expanded ? 8 : undefined,
+      }}
+    >
+      <UnstyledButton
+        onClick={() => setExpanded(!expanded)}
+        w='100%'
+        px='sm'
+        py='sm'
+        style={{ display: 'block' }}
+        aria-expanded={expanded}
+      >
+        <Group wrap='nowrap' justify='space-between' gap='sm'>
+          <Group wrap='nowrap' gap={8} style={{ minWidth: 0, flex: 1 }}>
+            <IconChevronDown
+              size={16}
+              style={{
+                flexShrink: 0,
+                opacity: 0.7,
+                transform: expanded ? 'rotate(0deg)' : 'rotate(-90deg)',
+                transition: 'transform 150ms ease',
+              }}
+            />
+            <Text fz='sm' style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {block.name}
+            </Text>
+            <ActionSymbol cost={block.actions} gap={5} />
+          </Group>
+          <Group gap={6} wrap='nowrap'>
+            {props.showLevel && block.level != null ? (
+              <Badge size='sm' variant='light' color='gray'>
+                Level {block.level}
+              </Badge>
+            ) : null}
+            <TraitsDisplay
+              justify='flex-end'
+              size='xs'
+              traitIds={traitIds}
+              rarity={block.rarity}
+              availability={block.availability ?? undefined}
+            />
+          </Group>
+        </Group>
+      </UnstyledButton>
+      {expanded ? (
+        <Box px='md' pb='md'>
+          <Divider mb='sm' color='dark.5' />
+          {props.kind === 'feat' ? (
+            <FeatDrawerContent data={{ id: block.id }} />
+          ) : (
+            <ClassFeatureDrawerContent data={{ id: block.id }} />
+          )}
+        </Box>
+      ) : null}
+    </Box>
+  );
+}
 
 export function ClassDrawerTitle(props: { data: { id?: number; class_?: Class; onSelect?: () => void } }) {
   const id = props.data.id;
@@ -73,7 +194,8 @@ export function ClassDrawerTitle(props: { data: { id?: number; class_?: Class; o
     },
     enabled: !!id,
   });
-  const class_ = props.data.class_ ?? _class_;
+  // Prefer network result so a slim list-row placeholder can upgrade to full record.
+  const class_ = _class_ ?? props.data.class_;
 
   return (
     <>
@@ -110,169 +232,150 @@ export function ClassDrawerContent(props: {
   onMetadataChange?: (openedDict?: Record<string, string>) => void;
 }) {
   const id = props.data.id;
+  const placeholderTraitId = props.data.class_?.trait_id;
 
-  const { data, isFetching, refetch } = useQuery({
-    queryKey: [`find-class-details-${id}`, { id, sources: getDefaultSourcesKey('INFO') }],
+  const {
+    data: fetchedClass,
+    isFetching: classFetching,
+    refetch: refetchClass,
+  } = useQuery({
+    queryKey: [`find-class-${id}`, { id }],
+    queryFn: async () => (id === undefined ? null : await fetchContentById<Class>('class', id)),
+    enabled: !!id,
+  });
+  // Overview needs description/operations — only use placeholder if it already has them.
+  const class_ =
+    fetchedClass ?? (props.data.class_?.description ? props.data.class_ : undefined);
+  const traitId = fetchedClass?.trait_id ?? placeholderTraitId;
+
+  const {
+    data: abilityBlocks,
+    isFetching: blocksFetching,
+    refetch: refetchBlocks,
+  } = useQuery({
+    queryKey: [`find-class-ability-blocks-${id}`, { id, traitId, sources: getDefaultSourcesKey('INFO') }],
     queryFn: async () => {
       const sources = getDefaultSources('INFO');
-      const class_ = props.data.class_ ?? (id === undefined ? null : await fetchContentById<Class>('class', id));
-      // The drawer displays only this class's features and feats. Keep the same
-      // source scope while filtering on the server instead of downloading every class.
-      const abilityBlocks = class_
-        ? await fetchContent<AbilityBlock>('ability-block', { content_sources: sources, traits: [class_.trait_id] })
-        : [];
-      return { class_, abilityBlocks };
+      return fetchContent<AbilityBlock>('ability-block', {
+        content_sources: sources,
+        traits: [traitId!],
+      });
     },
+    enabled: traitId != null,
   });
 
-  const [_drawer, openDrawer] = useAtom(drawerState);
-
   const classFeatures = groupBy(
-    (data?.abilityBlocks ?? []).filter(
-      (block) => block.type === 'class-feature' && block.traits?.includes(data?.class_?.trait_id ?? -1)
+    (abilityBlocks ?? []).filter(
+      (block) => block.type === 'class-feature' && block.traits?.includes(traitId ?? -1)
     ),
     'level'
   );
   const feats = groupBy(
-    (data?.abilityBlocks ?? []).filter(
-      (block) => block.type === 'feat' && block.traits?.includes(data?.class_?.trait_id ?? -1)
+    (abilityBlocks ?? []).filter(
+      (block) => block.type === 'feat' && block.traits?.includes(traitId ?? -1)
     ),
     'level'
   );
 
-  const featSections = Object.keys(feats).map((level) => (
-    <Accordion.Item key={level} value={level}>
-      <Accordion.Control>
-        <Group wrap='nowrap' justify='space-between' gap={0}>
-          <Text c='gray.2' fw={700} fz='md'>
-            Level {level}
-          </Text>
-          <Badge mr='sm' variant='outline' color='gray.5' size='sm'>
-            <Text c='gray.2' span inherit>
-              {feats[level].filter((feat) => isAbilityBlockVisible('CHARACTER', feat)).length}
-            </Text>
-          </Badge>
-        </Group>
-      </Accordion.Control>
-      <Accordion.Panel
-        styles={{
-          content: {
-            padding: 0,
-          },
-        }}
-      >
-        <Stack gap={0}>
-          <Divider color='dark.6' />
-          {feats[level]
-            .filter((feat) => isAbilityBlockVisible('CHARACTER', feat))
-            .sort((a, b) => a.name.localeCompare(b.name))
-            .map((feat, index) => (
-              <FeatSelectionOption
-                key={index}
-                feat={feat}
-                showButton={false}
-                onClick={() => {
-                  props.onMetadataChange?.();
-                  openDrawer({
-                    type: 'feat',
-                    data: { id: feat.id },
-                    extra: { addToHistory: true },
-                  });
-                }}
-              />
-            ))}
-        </Stack>
-      </Accordion.Panel>
-    </Accordion.Item>
-  ));
+  const levelAccordionItems = (byLevel: Record<string, AbilityBlock[]>, kind: 'feat' | 'class-feature') =>
+    Object.keys(byLevel)
+      .toSorted((a, b) => Number(a) - Number(b))
+      .map((level) => (
+        <Accordion.Item key={`${kind}-${level}`} value={`${kind}-${level}`}>
+          <Accordion.Control>
+            <Group wrap='nowrap' justify='space-between' gap={0}>
+              <Text c='gray.2' fw={700} fz='md'>
+                Level {level}
+              </Text>
+              <Badge mr='sm' variant='outline' color='gray.5' size='sm'>
+                <Text c='gray.2' span inherit>
+                  {byLevel[level].filter((block) => isAbilityBlockVisible('CHARACTER', block)).length}
+                </Text>
+              </Badge>
+            </Group>
+          </Accordion.Control>
+          <Accordion.Panel
+            styles={{
+              content: {
+                padding: 0,
+              },
+            }}
+          >
+            <Stack gap={0}>
+              <Divider color='dark.6' />
+              {byLevel[level]
+                .filter((block) => isAbilityBlockVisible('CHARACTER', block))
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map((block) => (
+                  <ExpandableAbilityBlockRow
+                    key={block.id}
+                    block={block}
+                    kind={kind}
+                    focusTraitId={traitId}
+                  />
+                ))}
+            </Stack>
+          </Accordion.Panel>
+        </Accordion.Item>
+      ));
 
-  if (!data || !data.class_ || !data.abilityBlocks) {
-    return <DrawerLoadState loading={isFetching} onRetry={refetch} />;
+  if (!class_) {
+    return (
+      <DrawerLoadState
+        loading={classFetching || blocksFetching}
+        onRetry={() => {
+          void refetchClass();
+          void refetchBlocks();
+        }}
+      />
+    );
   }
 
   return (
     <Stack>
-      <ClassInitialOverview class_={data.class_} mode='READ' />
-      <Box>
-        <Title order={3}>Class Features</Title>
-        <Divider />
-        <Table striped withColumnBorders withRowBorders={false}>
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th ta='center'>Level</Table.Th>
-              <Table.Th>Class Features</Table.Th>
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {Array.from({ length: 20 }, (_, i) => i + 1).map((level, index) => (
-              <Table.Tr key={index}>
-                <Table.Td ta='center'>{level}</Table.Td>
-                <Table.Td>
-                  {classFeatures[`${level}`] && classFeatures[`${level}`].length > 0 && (
-                    <>
-                      {classFeatures[`${level}`]
-                        .sort((a, b) => a.name.localeCompare(b.name))
-                        .flatMap((feature, index) =>
-                          index < classFeatures[`${level}`].length - 1
-                            ? [
-                                <Anchor
-                                  fz='sm'
-                                  onClick={() => {
-                                    props.onMetadataChange?.();
-                                    openDrawer({
-                                      type: 'class-feature',
-                                      data: { id: feature.id },
-                                      extra: { addToHistory: true },
-                                    });
-                                  }}
-                                >
-                                  {feature.name}
-                                </Anchor>,
-                                ', ',
-                              ]
-                            : [
-                                <Anchor
-                                  fz='sm'
-                                  onClick={() => {
-                                    props.onMetadataChange?.();
-                                    openDrawer({
-                                      type: 'class-feature',
-                                      data: { id: feature.id },
-                                      extra: { addToHistory: true },
-                                    });
-                                  }}
-                                >
-                                  {feature.name}
-                                </Anchor>,
-                              ]
-                        )}
-                    </>
-                  )}
-                </Table.Td>
-              </Table.Tr>
-            ))}
-          </Table.Tbody>
-        </Table>
-      </Box>
+      <ClassInitialOverview class_={class_} mode='READ' />
+      {abilityBlocks == null ? (
+        <Group justify='center' py='md'>
+          <Loader size='sm' type='dots' />
+        </Group>
+      ) : (
+        <>
+          <Box>
+            <Title order={3}>Class Features</Title>
+            <Accordion
+              variant='separated'
+              mt='xs'
+              defaultValue={getMetadataOpenedDict().feature_section}
+              onChange={(value) => {
+                props.onMetadataChange?.({
+                  feature_section: value ?? '',
+                });
+              }}
+            >
+              {levelAccordionItems(classFeatures, 'class-feature')}
+            </Accordion>
+          </Box>
 
-      <Box>
-        <Title order={3}>Feats</Title>
-
-        <Accordion
-          variant='separated'
-          // Save opened state in drawer metadata (so it persists when opening links and going back)
-          defaultValue={getMetadataOpenedDict().feat_section}
-          onChange={(value) => {
-            props.onMetadataChange?.({
-              feat_section: value ?? '',
-            });
-          }}
-        >
-          {featSections}
-        </Accordion>
-      </Box>
+          <Box>
+            <Title order={3}>Feats</Title>
+            <Accordion
+              variant='separated'
+              mt='xs'
+              // Save opened state so it persists when opening links and going back
+              defaultValue={getMetadataOpenedDict().feat_section}
+              onChange={(value) => {
+                props.onMetadataChange?.({
+                  feat_section: value ?? '',
+                });
+              }}
+            >
+              {levelAccordionItems(feats, 'feat')}
+            </Accordion>
+          </Box>
+        </>
+      )}
       {props.data.showOperations && (
-        <ShowOperationsButton name={data.class_.name} operations={data.class_.operations ?? undefined} />
+        <ShowOperationsButton name={class_.name} operations={class_.operations ?? undefined} />
       )}
     </Stack>
   );

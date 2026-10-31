@@ -7,9 +7,8 @@ import StatBlockSection from '@common/StatBlockSection';
 import { applyConditions } from '@conditions/condition-handler';
 import {
   fetchContentById,
-  fetchContentPackage,
+  fetchCreatureContentPackage,
   fetchTraits,
-  getDefaultSources,
   getDefaultSourcesKey,
 } from '@content/content-store';
 import { getMetadataOpenedDict } from '@drawers/drawer-utils';
@@ -135,35 +134,54 @@ export function CreatureDrawerContent(props: {
   });
   const view = props.data.readOnly ? 'BLOCK' : drawerData.view;
 
-  const {
-    data: content,
-    isFetching,
-    refetch,
-  } = useQuery({
-    queryKey: [`find-creature-details-${id}`, { id, sources: getDefaultSourcesKey('INFO') }],
-    queryFn: async ({ queryKey }) => {
-      // @ts-ignore
-
-      const [_key, { id }] = queryKey;
-
-      if (id) {
-        const _creature = await fetchContentById<Creature>('creature', id);
-        setCreature(_creature);
-      }
-
-      const content = await fetchContentPackage(getDefaultSources('INFO'), {
-        fetchSources: false,
-        fetchCreatures: false,
-      });
-      return content;
-    },
-    // Reopening a cached preview still needs to initialize its local creature state.
-    refetchOnMount: 'always',
-  });
   const [_creatureDrawer, openCreatureDrawer] = useAtom(creatureDrawerState);
   const [displayStatBlock, refreshStatBlock] = useRefresh();
   const [loading, setLoading] = useState(true);
   const [creature, setCreature] = useState<Creature | null>(props.data.creature ?? null);
+
+  const {
+    data: loadedCreature,
+    isFetching: isFetchingCreature,
+    refetch: refetchCreature,
+  } = useQuery({
+    queryKey: [`creature-drawer-record`, id],
+    queryFn: async () => {
+      if (!id) return props.data.creature ?? null;
+      return await fetchContentById<Creature>('creature', id);
+    },
+    enabled: !!id || !!props.data.creature,
+    // Reopening still needs a fresh record for local state; package is cached separately.
+    refetchOnMount: 'always',
+  });
+
+  useEffect(() => {
+    if (loadedCreature) setCreature(loadedCreature);
+  }, [loadedCreature]);
+
+  const {
+    data: content,
+    isFetching: isFetchingContent,
+    refetch: refetchContent,
+  } = useQuery({
+    queryKey: [
+      `creature-drawer-content`,
+      creature?.id ?? null,
+      creature?.updated_at ?? null,
+      getDefaultSourcesKey('INFO'),
+    ],
+    queryFn: async () => {
+      if (!creature) return null;
+      // By-id package — skips multi-second ability-block/item catalog dumps.
+      return await fetchCreatureContentPackage(creature);
+    },
+    enabled: !!creature,
+    staleTime: 1000 * 60 * 30,
+  });
+
+  const isFetching = isFetchingCreature || isFetchingContent;
+  const refetch = async () => {
+    await Promise.all([refetchCreature(), refetchContent()]);
+  };
   const [editingCreature, _setEditingCreature] = useState(false);
   const toggleEditing = () => {
     if (editingCreature) {
@@ -198,8 +216,11 @@ export function CreatureDrawerContent(props: {
   const STORE_ID = props.data.STORE_ID ?? `CREATURE_${creature?.id ?? 'UNKNOWN'}`;
 
   const [operationResults, setOperationResults] = useState<OperationCreatureResultPackage>();
+  /** Bumped when ops settle so StatBlockSection re-reads resist/weak/immune vars. */
+  const [calculationKey, setCalculationKey] = useState(0);
   useEffect(() => {
     if (!creature || !content) return;
+    setLoading(true);
     const controller = new AbortController();
     const timers: ReturnType<typeof setTimeout>[] = [];
     executeOperations<OperationCreatureResultPackage>(
@@ -255,6 +276,7 @@ export function CreatureDrawerContent(props: {
         }
 
         setOperationResults(results);
+        setCalculationKey((k) => k + 1);
 
         timers.push(
           setTimeout(() => {
@@ -274,6 +296,7 @@ export function CreatureDrawerContent(props: {
         // Settle and render the available record; calculation diagnostics stay in the background.
         console.error(`Error: Failed to execute operations for creature ${creature.id}`, error);
 
+        setCalculationKey((k) => k + 1);
         setLoading(false);
         refreshStatBlock();
       });
@@ -281,7 +304,10 @@ export function CreatureDrawerContent(props: {
       controller.abort();
       timers.forEach(clearTimeout);
     };
-  }, [creature, content, STORE_ID]);
+    // Intentionally depend on creature.id (and content), not the whole creature object —
+    // confirmHealth HP updates must not resetVariables and wipe resists mid-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [creature?.id, content, STORE_ID]);
 
   const setCreatureInstant = (call: React.SetStateAction<Creature | null>) => {
     // Update source immediately
@@ -356,29 +382,40 @@ export function CreatureDrawerContent(props: {
         <>
           {view === 'BLOCK' ? (
             <Stack gap={10}>
-              <Group gap={15}>
-                <Box style={{ flex: 1 }}>
-                  <HealthSection id={STORE_ID} entity={creature} setEntity={convertToSetEntity(setCreature)} />
-                </Box>
-                {creature.details.image_url && (
-                  <BlurBox h={111} pr='sm' pt='sm'>
-                    <DisplayIcon
-                      strValue={creature.details.image_url}
-                      width={90}
-                      iconStyles={{
-                        height: 90,
-                      }}
+              {/* Book-style block: HP + immunities/resistances/weaknesses live in StatBlockSection. */}
+              {!props.data.readOnly && (
+                <Group gap={15}>
+                  <Box style={{ flex: 1 }}>
+                    <HealthSection
+                      id={STORE_ID}
+                      entity={creature}
+                      setEntity={convertToSetEntity(setCreature)}
+                      hideResistWeakButton
                     />
-                  </BlurBox>
-                )}
-              </Group>
+                  </Box>
+                  {creature.details.image_url && (
+                    <BlurBox h={111} pr='sm' pt='sm'>
+                      <DisplayIcon
+                        strValue={creature.details.image_url}
+                        width={90}
+                        iconStyles={{
+                          height: 90,
+                        }}
+                      />
+                    </BlurBox>
+                  )}
+                </Group>
+              )}
               <StatBlockSection
                 storeId={STORE_ID}
                 entity={creature}
+                calculationKey={calculationKey}
+                contentPackage={content}
                 options={{
                   hideName: true,
-                  hideHealth: true,
-                  hideImage: true,
+                  // Always show the HP + immunities/resistances/weaknesses defense line.
+                  hideHealth: false,
+                  hideImage: !props.data.readOnly,
                 }}
               />
 

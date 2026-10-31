@@ -333,8 +333,20 @@ export function extractFromDescription(description?: string) {
 export const EQUIPMENT_TYPES = ['equipment', 'weapon', 'armor', 'shield', 'kit', 'consumable', 'backpack', 'treasure'];
 
 //// Foundry Content Linking Parsing & Removal ////
-// - Maybe save some of this data instead of deleting it all
+/**
+ * Convert Foundry inline enrichers to plain readable prose for display.
+ * Safe at render time — does not mutate stored content.
+ *
+ * Handles classic (`@Check[type:fortitude|dc:15]`) and modern
+ * (`@Check[fortitude|dc:15]`, `@Check[reflex|dc:19|basic]`) enrichers, including
+ * dump rows with escaped brackets (`@Check\[…\]`).
+ */
 export function stripFoundryLinking(text: string, level?: number) {
+  if (!text) return text;
+
+  // Unescape Foundry dump artifacts: @Check\[fortitude|dc:15\] → @Check[…]
+  text = text.replace(/\\([\[\]])/g, '$1');
+
   text = text.replace(/@actor\.level/g, '1');
   if (level) {
     text = text.replace(/@item\.level/g, `${level}`);
@@ -342,8 +354,7 @@ export function stripFoundryLinking(text: string, level?: number) {
 
   text = stripCompendiumLinks(text);
   text = stripDamageLinks(text);
-  text = stripCheckLinks(text, true);
-  text = stripCheckLinks(text, false);
+  text = stripCheckLinks(text);
   text = stripDistanceLinks(text);
   text = stripMathLinks(text);
   text = stripNpcLinks(text);
@@ -426,45 +437,90 @@ function stripMathLinks(text: string) {
   return newText;
 }
 
-function stripCheckLinks(text: string, basic: boolean) {
-  const regex = basic
-    ? /@Check\[type:([^\]]+)\|([^\]]+)\|basic:true\]/gm
-    : /@Check\[type:([^\]]+)\|([^\]]+)\|basic:false\]/gm;
+/**
+ * `@Check[fortitude|dc:15]` → `DC 15 Fortitude`
+ * `@Check[reflex|dc:19|basic]` → `DC 19 basic Reflex`
+ * `@Check[type:will|dc:20|basic:true]` → `DC 20 basic Will`
+ */
+function stripCheckLinks(text: string) {
+  return text.replace(/@Check\[([^\]]+)\]/gim, (_full, inner: string) => {
+    const parts = inner
+      .split('|')
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (parts.length === 0) return _full;
 
-  let newText = text;
-  let match;
-  while ((match = regex.exec(text)) !== null) {
-    const type = match[1];
-    const extra = match[2];
+    let checkType = '';
+    let dc: string | undefined;
+    let basic = false;
 
-    newText = newText.replace(match[0], `basic ${toLabel(type)}`);
-  }
+    for (const part of parts) {
+      const lower = part.toLowerCase();
+      if (lower === 'basic' || lower === 'basic:true') {
+        basic = true;
+        continue;
+      }
+      if (lower === 'basic:false') continue;
 
-  // Alt version
-  const regex2 = /@Check\[type:([^\]]+)\|dc:([^\]]+)\]/gm;
-  while ((match = regex2.exec(text)) !== null) {
-    const type = match[1];
-    const dc = match[2];
+      const kv = part.split(':');
+      if (kv.length >= 2) {
+        const key = kv[0].trim().toLowerCase();
+        const value = kv.slice(1).join(':').trim();
+        if (key === 'type' || key === 'statistic' || key === 'stat') {
+          checkType = value;
+          continue;
+        }
+        if (key === 'dc') {
+          dc = value;
+          continue;
+        }
+        if (key === 'basic') {
+          basic = value.toLowerCase() === 'true';
+          continue;
+        }
+      }
 
-    newText = newText.replace(match[0], `${toLabel(type)} ${dc}`);
-  }
+      // Modern short form: first bare token is the save/skill (fortitude, flat, …).
+      if (!checkType && !part.includes(':')) {
+        checkType = part;
+      }
+    }
 
-  return newText;
+    if (!checkType) return _full;
+    const label = toLabel(checkType.replace(/_/g, '-'));
+    if (dc) {
+      return basic ? `DC ${dc} basic ${label}` : `DC ${dc} ${label}`;
+    }
+    return basic ? `basic ${label}` : label;
+  });
 }
 
+/**
+ * `@Template[emanation|distance:5]` / `@Template[type:burst|distance:10]` → `5-foot emanation`
+ */
 function stripDistanceLinks(text: string) {
-  const regex = /@Template\[type:([^\]]+)\|distance:([^\]]+)\]/gm;
-
-  let newText = text;
-  let match;
-  while ((match = regex.exec(text)) !== null) {
-    const type = match[1];
-    const distance = match[2];
-
-    newText = newText.replace(match[0], `${distance}-foot ${type}`);
-  }
-
-  return newText;
+  return text.replace(/@Template\[([^\]]+)\]/gim, (_full, inner: string) => {
+    const parts = inner
+      .split('|')
+      .map((p) => p.trim())
+      .filter(Boolean);
+    let type = '';
+    let distance = '';
+    for (const part of parts) {
+      const kv = part.split(':');
+      if (kv.length >= 2) {
+        const key = kv[0].trim().toLowerCase();
+        const value = kv.slice(1).join(':').trim();
+        if (key === 'type') type = value;
+        else if (key === 'distance') distance = value;
+      } else if (!type) {
+        type = part;
+      }
+    }
+    if (type && distance) return `${distance}-foot ${type}`;
+    if (type) return type;
+    return _full;
+  });
 }
 
 function stripCompendiumLinks(text: string) {

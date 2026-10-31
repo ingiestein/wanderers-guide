@@ -39,7 +39,8 @@ export function FeatDrawerTitle(props: { data: { id?: number; feat?: AbilityBloc
     },
     enabled: !!id,
   });
-  const feat = props.data.feat ?? _feat;
+  // Prefer network so a slim list-row placeholder can upgrade to the full record.
+  const feat = _feat ?? props.data.feat;
 
   let type = `Feat ${feat?.level}`;
   if (feat?.meta_data?.unselectable) {
@@ -105,7 +106,8 @@ export function FeatDrawerContent(props: { data: { id?: number; feat?: AbilityBl
     },
     enabled: !!id,
   });
-  const feat = props.data.feat ?? _feat;
+  // Slim search rows lack description — wait for by-id (or a full in-memory record).
+  const feat = _feat ?? (props.data.feat?.description != null ? props.data.feat : undefined);
 
   if (!feat) {
     return <DrawerLoadState loading={isFetching} onRetry={refetch} />;

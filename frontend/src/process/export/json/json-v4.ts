@@ -17,7 +17,7 @@ import { getInnateSpellAttribute } from '@spells/innate-spells';
 import { isCantrip, isRitual } from '@spells/spell-utils';
 import { ContentPackage, LivingEntity, SourceValue } from '@schemas/content';
 import { StoreID, VariableListStr, VariableStr } from '@schemas/variables';
-import { displayResistWeak } from '@utils/resist-weaks';
+import { displayResistWeak, getResistWeaks } from '@utils/resist-weaks';
 import { toLabel } from '@utils/strings';
 import { isCharacter, isCreature, isTruthy } from '@utils/type-fixing';
 import {
@@ -127,8 +127,6 @@ export async function getJsonV4Content(entity: LivingEntity, inputStoreID?: Stor
     })
     .filter(isTruthy);
 
-  const resistVar = getVariable<VariableListStr>(STORE_ID, 'RESISTANCES');
-  const weakVar = getVariable<VariableListStr>(STORE_ID, 'WEAKNESSES');
   const immuneVar = getVariable<VariableListStr>(STORE_ID, 'IMMUNITIES');
 
   const languages = getVariable<VariableListStr>(STORE_ID, 'LANGUAGE_NAMES')?.value ?? [];
@@ -224,10 +222,11 @@ export async function getJsonV4Content(entity: LivingEntity, inputStoreID?: Stor
     };
   });
 
+  // Match StatResistWeakDrawer: merge stacked resist/weak amounts, keep immunity labels.
   const resistWeaks = {
-    resists: resistVar?.value.map((v) => displayResistWeak(STORE_ID, v)) ?? [],
-    weaks: weakVar?.value.map((v) => displayResistWeak(STORE_ID, v)) ?? [],
-    immunes: immuneVar?.value.map((v) => displayResistWeak(STORE_ID, v)) ?? [],
+    resists: getResistWeaks(STORE_ID, 'RESISTANCES'),
+    weaks: getResistWeaks(STORE_ID, 'WEAKNESSES'),
+    immunes: (immuneVar?.value ?? []).map((v) => displayResistWeak(STORE_ID, v)),
   };
 
   // Prof dump
