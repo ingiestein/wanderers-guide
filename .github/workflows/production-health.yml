@@ -13,7 +13,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Forks inherit this workflow but lack WG_MONITOR_ANON_KEY; skip there so
+  # scheduled runs don't fail every 15 minutes and spam Action emails.
   semantic-health:
+    if: github.repository == 'wanderers-guide/wanderers-guide'
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
